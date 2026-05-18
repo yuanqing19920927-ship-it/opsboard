@@ -181,6 +181,41 @@ func (h *DatabaseHandler) buildAccountNameMap(instances []store.CloudInstance) m
 	return names
 }
 
+// DatabaseAlertTargets returns monitored RDS instances as hostID -> display
+// label, for the alert engine. Implements alert.DatabaseProvider.
+func (h *DatabaseHandler) DatabaseAlertTargets() map[string]string {
+	_, rdsList, err := h.cloudStore.LoadMonitoredInstances()
+	if err != nil {
+		log.Printf("[db-api] alert targets: load monitored RDS error: %v", err)
+		return nil
+	}
+	targets := make(map[string]string, len(rdsList))
+	for _, inst := range rdsList {
+		label := inst.InstanceName
+		if label == "" {
+			label = inst.HostID
+		}
+		targets[inst.HostID] = label
+	}
+	return targets
+}
+
+// DatabaseMetrics returns a copy of the latest cached metric snapshot for one
+// RDS host. Implements alert.DatabaseProvider.
+func (h *DatabaseHandler) DatabaseMetrics(hostID string) map[string]float64 {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	src := h.cache[hostID]
+	if src == nil {
+		return nil
+	}
+	cp := make(map[string]float64, len(src))
+	for k, v := range src {
+		cp[k] = v
+	}
+	return cp
+}
+
 func (h *DatabaseHandler) queryVM() map[string]map[string]float64 {
 	result := make(map[string]map[string]float64)
 

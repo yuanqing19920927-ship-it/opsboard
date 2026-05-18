@@ -32,32 +32,44 @@ type NasProvider interface {
 	ListDeviceIDs() []int64
 }
 
+// DatabaseProvider interface for reading RDS (database) metrics and the
+// monitored instance list. Implemented by api.DatabaseHandler, which keeps a
+// 30s-refreshed cache of RDS metrics queried from VictoriaMetrics.
+type DatabaseProvider interface {
+	// DatabaseAlertTargets returns monitored RDS instances as hostID -> label.
+	DatabaseAlertTargets() map[string]string
+	// DatabaseMetrics returns the latest cached metric snapshot for one host.
+	DatabaseMetrics(hostID string) map[string]float64
+}
+
 // Alerter is the core alert engine implementing evaluation loop, state machine, and notification dispatch.
 type Alerter struct {
-	store   *store.AlertStore
-	hub     *ws.Hub
-	metrics MetricsProvider
-	probes  ProbeProvider
-	servers ServerProvider
-	nas     NasProvider
-	network NetworkProvider
-	mu      sync.RWMutex
-	states  map[string]*ruleState
-	stopCh  chan struct{}
+	store    *store.AlertStore
+	hub      *ws.Hub
+	metrics  MetricsProvider
+	probes   ProbeProvider
+	servers  ServerProvider
+	nas      NasProvider
+	network  NetworkProvider
+	database DatabaseProvider
+	mu       sync.RWMutex
+	states   map[string]*ruleState
+	stopCh   chan struct{}
 }
 
 // NewAlerter creates a new Alerter instance.
-func NewAlerter(s *store.AlertStore, hub *ws.Hub, metrics MetricsProvider, probes ProbeProvider, servers ServerProvider, nas NasProvider, network NetworkProvider) *Alerter {
+func NewAlerter(s *store.AlertStore, hub *ws.Hub, metrics MetricsProvider, probes ProbeProvider, servers ServerProvider, nas NasProvider, network NetworkProvider, database DatabaseProvider) *Alerter {
 	return &Alerter{
-		store:   s,
-		hub:     hub,
-		metrics: metrics,
-		probes:  probes,
-		servers: servers,
-		nas:     nas,
-		network: network,
-		states:  make(map[string]*ruleState),
-		stopCh:  make(chan struct{}),
+		store:    s,
+		hub:      hub,
+		metrics:  metrics,
+		probes:   probes,
+		servers:  servers,
+		nas:      nas,
+		network:  network,
+		database: database,
+		states:   make(map[string]*ruleState),
+		stopCh:   make(chan struct{}),
 	}
 }
 
@@ -145,7 +157,38 @@ func (a *Alerter) evaluate() {
 		a.evaluateNetworkDevices(rules)
 	}
 
+	if a.database != nil {
+		a.evaluateDatabases(rules)
+	}
+
 	a.cleanupGoneTargets(servers)
+}
+
+// evaluateDatabases evaluates all db_* alert rules against cached RDS metrics.
+func (a *Alerter) evaluateDatabases(rules []model.AlertRule) {
+	targets := a.database.DatabaseAlertTargets()
+	if len(targets) == 0 {
+		return
+	}
+	for _, rule := range rules {
+		if !IsDatabaseRuleType(rule.Type) {
+			continue
+		}
+		for hostID, label := range targets {
+			// rule.TargetID empty = all databases; otherwise it is the
+			// "db:<hostID>" form sent by the UI (bare hostID also tolerated).
+			if rule.TargetID != "" && rule.TargetID != "db:"+hostID && rule.TargetID != hostID {
+				continue
+			}
+			metrics := a.database.DatabaseMetrics(hostID)
+			for _, r := range EvaluateDatabase(rule, hostID, label, metrics) {
+				if r.Skip {
+					continue
+				}
+				a.processResult(rule, r)
+			}
+		}
+	}
 }
 
 // processResult implements the state machine for a single evaluation result.
@@ -405,6 +448,14 @@ func (a *Alerter) cleanupGoneTargets(servers []model.Server) {
 		}
 	}
 
+	// Collect database (RDS) host IDs
+	dbIDs := make(map[string]bool)
+	if a.database != nil {
+		for hostID := range a.database.DatabaseAlertTargets() {
+			dbIDs["db:"+hostID] = true
+		}
+	}
+
 	// Find firing states whose targets are gone
 	type goneEntry struct {
 		key     string
@@ -417,7 +468,7 @@ func (a *Alerter) cleanupGoneTargets(servers []model.Server) {
 		if !st.firing {
 			continue
 		}
-		if !a.isTargetPresent(key, serverIDs, hostDisks, hostContainers, probeIDs, nasIDs, netdevIDs) {
+		if !a.isTargetPresent(key, serverIDs, hostDisks, hostContainers, probeIDs, nasIDs, netdevIDs, dbIDs) {
 			gone = append(gone, goneEntry{key: key, eventID: st.eventID})
 		}
 	}
@@ -443,10 +494,11 @@ func (a *Alerter) cleanupGoneTargets(servers []model.Server) {
 
 // isTargetPresent checks if the target referenced by a state key still exists.
 // Called with mu held for reading.
-func (a *Alerter) isTargetPresent(key string, serverIDs map[string]bool, hostDisks, hostContainers map[string]map[string]bool, probeIDs, nasIDs, netdevIDs map[string]bool) bool {
+func (a *Alerter) isTargetPresent(key string, serverIDs map[string]bool, hostDisks, hostContainers map[string]map[string]bool, probeIDs, nasIDs, netdevIDs, dbIDs map[string]bool) bool {
 	// State key format: "ruleID:targetID" or "ruleID:hostID:mount_or_container"
 	// NAS keys:    "ruleID:nas:nasID" or "ruleID:nas:nasID:subLabel"
 	// Netdev keys: "ruleID:netdev:deviceID"
+	// DB keys:     "ruleID:db:hostID"
 	parts := strings.SplitN(key, ":", 3)
 	if len(parts) < 2 {
 		return true // can't parse, assume present
@@ -458,6 +510,11 @@ func (a *Alerter) isTargetPresent(key string, serverIDs map[string]bool, hostDis
 	if targetID == "netdev" && len(parts) == 3 {
 		netdevKey := fmt.Sprintf("netdev:%s", parts[2])
 		return netdevIDs[netdevKey]
+	}
+
+	// Check database targets: key is "ruleID:db:hostID"
+	if targetID == "db" && len(parts) == 3 {
+		return dbIDs["db:"+parts[2]]
 	}
 
 	// Check NAS targets: key starts with "ruleID:nas:..."

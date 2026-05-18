@@ -74,6 +74,10 @@ func (ps *PermissionSet) CanSeeAlertTarget(ruleType, targetID string) bool {
 	if ruleType == "probe_down" {
 		return ps.Probes[targetID]
 	}
+	// database (RDS) targets: "db:<host_id>" → resource-level DB permission
+	if strings.HasPrefix(targetID, "db:") {
+		return ps.Databases[strings.TrimPrefix(targetID, "db:")]
+	}
 	// disk and container: extract host_id before colon
 	hostID := targetID
 	if ruleType == "disk" || ruleType == "container" {
@@ -111,6 +115,10 @@ func (ps *PermissionSet) CanSeeEvent(targetID string) bool {
 	// Check if it's a probe (numeric ID)
 	if ps.Probes[targetID] {
 		return true
+	}
+	// database (RDS) events: target_id is "db:<host_id>"
+	if strings.HasPrefix(targetID, "db:") {
+		return ps.Databases[strings.TrimPrefix(targetID, "db:")]
 	}
 	// Extract host_id (before colon for disk/container targets)
 	hostID := targetID

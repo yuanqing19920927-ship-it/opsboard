@@ -354,6 +354,57 @@ func EvaluateNas(rule model.AlertRule, nasID int64, snap *collector.NasMetricsSn
 	return nil
 }
 
+// dbMetricSpec maps a db_* alert rule type to the cached RDS metric key
+// (the metric name with the "mantisops_rds_" prefix stripped, as stored by
+// DatabaseHandler) and a human-readable label for alert messages.
+var dbMetricSpec = map[string]struct {
+	key   string
+	label string
+}{
+	"db_cpu":        {"cpu_usage", "CPU 使用率"},
+	"db_memory":     {"memory_usage", "内存使用率"},
+	"db_disk":       {"disk_usage", "磁盘使用率"},
+	"db_connection": {"connection_usage", "连接数使用率"},
+	"db_iops":       {"iops_usage", "IOPS 使用率"},
+}
+
+// IsDatabaseRuleType reports whether a rule type is a database (RDS) alert type.
+func IsDatabaseRuleType(t string) bool {
+	_, ok := dbMetricSpec[t]
+	return ok
+}
+
+// EvaluateDatabase evaluates a database (RDS) alert rule against one instance's
+// cached metrics snapshot. metrics is the hostID's metric map kept fresh by
+// DatabaseHandler. All supported db_* types are percentage metrics evaluated
+// with the rule's operator/threshold.
+func EvaluateDatabase(rule model.AlertRule, hostID, dbLabel string, metrics map[string]float64) []EvalResult {
+	spec, ok := dbMetricSpec[rule.Type]
+	if !ok {
+		return nil
+	}
+	stateKey := fmt.Sprintf("%d:db:%s", rule.ID, hostID)
+	val, ok := metrics[spec.key]
+	if !ok {
+		// Metric not yet collected — skip so a missing datapoint never
+		// flaps the alert state.
+		return []EvalResult{{StateKey: stateKey, Skip: true}}
+	}
+	label := dbLabel
+	if label == "" {
+		label = hostID
+	}
+	hit := compare(val, rule.Operator, rule.Threshold)
+	return []EvalResult{{
+		StateKey: stateKey,
+		TargetID: fmt.Sprintf("db:%s", hostID),
+		Hit:      hit,
+		Value:    val,
+		Label:    label,
+		Message:  fmt.Sprintf("数据库 %s %s: %.2f%% (阈值: %s %.2f%%)", label, spec.label, val, rule.Operator, rule.Threshold),
+	}}
+}
+
 // evalNetworkDeviceOffline evaluates network device offline rules.
 // It does NOT use the consecutive-count threshold: the ConnectivityMonitor
 // already applies a 3-fail threshold before setting status="offline", so
