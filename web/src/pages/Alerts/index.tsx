@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, type ReactNode } from 'react'
 import {
   getAlertRules, createAlertRule, updateAlertRule, deleteAlertRule,
   getAlertEvents, getAlertStats, ackAlertEvent, getEventNotifications,
@@ -125,6 +125,7 @@ const inputClass =
   'w-full border border-[#e9ecef] rounded-[6px] px-3 py-2 text-sm text-[#495057] placeholder:text-[#adb5bd] focus:outline-none focus:border-[#2ca07a] focus:ring-2 focus:ring-[#2ca07a]/20 bg-white transition-colors'
 const selectClass =
   'w-full border border-[#e9ecef] rounded-[6px] px-3 py-2 text-sm text-[#495057] focus:outline-none focus:border-[#2ca07a] focus:ring-2 focus:ring-[#2ca07a]/20 bg-white transition-colors appearance-none'
+const fieldLabelClass = 'block text-[12px] font-medium text-[#878a99] mb-1'
 
 // ── Toggle Switch ──────────────────────────────────────────
 
@@ -142,6 +143,20 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () =>
         }`}
       />
     </button>
+  )
+}
+
+// Labeled form field cell. `label` shows a caption above the control so the
+// user knows what each input means. Pass label="" for a button cell — an
+// invisible caption keeps it bottom-aligned with the labeled fields.
+function Field({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div>
+      <label className={label ? fieldLabelClass : `${fieldLabelClass} invisible`} aria-hidden={label ? undefined : true}>
+        {label || ' '}
+      </label>
+      {children}
+    </div>
   )
 }
 
@@ -674,12 +689,15 @@ export default function Alerts() {
                 <div className="bg-[#f8f9fa] rounded-[8px] p-5 mb-5 border border-[#e9ecef]">
                   <h6 className="text-[#495057] font-semibold mb-4">新建告警规则</h6>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-                    <input
-                      placeholder="规则名称"
-                      value={ruleForm.name}
-                      onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })}
-                      className={inputClass}
-                    />
+                    <Field label="规则名称">
+                      <input
+                        placeholder="例如：生产库 CPU 过高"
+                        value={ruleForm.name}
+                        onChange={(e) => setRuleForm({ ...ruleForm, name: e.target.value })}
+                        className={inputClass}
+                      />
+                    </Field>
+                    <Field label="告警类型">
                     <select
                       value={ruleForm.type}
                       onChange={(e) => {
@@ -713,6 +731,8 @@ export default function Alerts() {
                         ))}
                       </optgroup>
                     </select>
+                    </Field>
+                    <Field label="监控目标">
                     {isNasType(ruleForm.type) ? (
                       <select
                         value={ruleForm.target_id}
@@ -737,12 +757,14 @@ export default function Alerts() {
                       </select>
                     ) : (
                       <input
-                        placeholder="目标 ID（可选）"
+                        placeholder="留空=全部；或填 host_id"
                         value={ruleForm.target_id}
                         onChange={(e) => setRuleForm({ ...ruleForm, target_id: e.target.value })}
                         className={inputClass}
                       />
                     )}
+                    </Field>
+                    <Field label="比较运算符">
                     <select
                       value={ruleForm.operator}
                       onChange={(e) => setRuleForm({ ...ruleForm, operator: e.target.value })}
@@ -752,24 +774,30 @@ export default function Alerts() {
                         <option key={o} value={o}>{o}</option>
                       ))}
                     </select>
+                    </Field>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {!(isNasType(ruleForm.type) && NAS_BOOLEAN_TYPES.has(ruleForm.type)) && (
+                      <Field label={`阈值${ruleForm.unit ? `（${ruleForm.unit}）` : ''}`}>
+                        <input
+                          type="number"
+                          placeholder="如 90"
+                          value={ruleForm.threshold}
+                          onChange={(e) => setRuleForm({ ...ruleForm, threshold: Number(e.target.value) })}
+                          className={inputClass}
+                        />
+                      </Field>
+                    )}
+                    <Field label="持续时间（秒）">
                       <input
                         type="number"
-                        placeholder="阈值"
-                        value={ruleForm.threshold}
-                        onChange={(e) => setRuleForm({ ...ruleForm, threshold: Number(e.target.value) })}
+                        placeholder="连续超阈值多少秒后触发，如 60"
+                        value={ruleForm.duration}
+                        onChange={(e) => setRuleForm({ ...ruleForm, duration: Number(e.target.value) })}
                         className={inputClass}
                       />
-                    )}
-                    <input
-                      type="number"
-                      placeholder="持续时间（秒）"
-                      value={ruleForm.duration}
-                      onChange={(e) => setRuleForm({ ...ruleForm, duration: Number(e.target.value) })}
-                      className={inputClass}
-                    />
+                    </Field>
+                    <Field label="告警级别">
                     <select
                       value={ruleForm.level}
                       onChange={(e) => setRuleForm({ ...ruleForm, level: e.target.value })}
@@ -779,6 +807,8 @@ export default function Alerts() {
                         <option key={o.value} value={o.value}>{o.label}</option>
                       ))}
                     </select>
+                    </Field>
+                    <Field label="">
                     <div className="flex gap-2">
                       <button
                         onClick={handleCreateRule}
@@ -793,6 +823,7 @@ export default function Alerts() {
                         取消
                       </button>
                     </div>
+                    </Field>
                   </div>
                 </div>
               )}
