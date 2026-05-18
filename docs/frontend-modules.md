@@ -218,8 +218,8 @@ RDS 云数据库实例监控。
 | 功能 | 说明 |
 |------|------|
 | 规则列表 | 规则名、类型、目标、条件、连续次数、级别、启用开关、删除 |
-| 添加规则 | 表单：名称、类型（10 种）、目标、运算符、阈值、连续次数、级别 |
-| 规则类型 | server_offline(服务器离线)、probe_down(端口异常)、cpu、memory、disk、container(容器异常)、gpu_temp、gpu_memory、network_rx、network_tx |
+| 添加规则 | 表单：名称、类型（按「服务器/探针」「数据库」「NAS」分组）、目标、运算符、阈值、连续次数、级别 |
+| 规则类型 | 服务器/探针：server_offline、probe_down、cpu、memory、disk、container、gpu_temp、gpu_memory、network_rx、network_tx；数据库：db_cpu、db_memory、db_disk、db_connection、db_iops（RDS 使用率，目标 `db:<host_id>`）；NAS：nas_offline、nas_raid_degraded、nas_disk_smart、nas_disk_temperature、nas_volume_usage、nas_ups_battery |
 | 动态生效 | 启用/禁用/删除规则时自动处理关联的 firing 事件 |
 
 **Tab 3 — 通知渠道：**

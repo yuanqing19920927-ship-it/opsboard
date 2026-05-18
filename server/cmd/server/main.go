@@ -139,8 +139,12 @@ func main() {
 	// for network_device_offline rule evaluation.  The full network topology
 	// module (scanner, monitor, handler) is initialised later at step 18.
 	alertNetworkStore := store.NewNetworkStore(db)
+	// dbHandler is created here (early) so it can serve as the alerter's
+	// DatabaseProvider for db_* (RDS) rule evaluation. Its API routes are
+	// wired later via RouterDeps (step 22).
+	dbHandler := api.NewDatabaseHandler(cloudStore, vmStore, permCache)
 	alertStore := store.NewAlertStore(db)
-	alerter := alert.NewAlerter(alertStore, hub, mc, prober, serverStore, nasCollector, alertNetworkStore)
+	alerter := alert.NewAlerter(alertStore, hub, mc, prober, serverStore, nasCollector, alertNetworkStore, dbHandler)
 	alerter.Start()
 	defer alerter.Stop()
 	alertHandler := api.NewAlertHandler(alertStore, alerter, permCache)
@@ -222,8 +226,8 @@ func main() {
 	authHandler := api.NewAuthHandler(userStore, cfg.Auth.JWTSecret, tvCache)
 	userHandler := api.NewUserHandler(userStore, tvCache, permCache, hub)
 
-	// 15. Database (RDS) - reads from CloudStore
-	dbHandler := api.NewDatabaseHandler(cloudStore, vmStore, permCache)
+	// 15. Database (RDS) handler created early at step 10 (alerter's
+	// DatabaseProvider); routes wired via RouterDeps at step 22.
 
 	// 16. Billing - reads from CloudStore + CredentialStore
 	billingHandler := api.NewBillingHandler(cloudStore, credentialStore, cfg.Aliyun, permCache)

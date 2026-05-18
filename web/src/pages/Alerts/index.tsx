@@ -6,6 +6,7 @@ import {
 } from '../../api/alert'
 import { getNasDevices } from '../../api/nas'
 import type { NasDevice } from '../../api/nas'
+import { getDatabases, type RDSInfo } from '../../api/client'
 import type { AlertRule, AlertEvent, AlertStats, NotificationChannel, AlertNotificationDetail } from '../../types'
 import { useAuthStore } from '../../stores/authStore'
 
@@ -22,6 +23,11 @@ const RULE_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'gpu_memory', label: 'GPU 显存' },
   { value: 'network_rx', label: '网络入站' },
   { value: 'network_tx', label: '网络出站' },
+  { value: 'db_cpu', label: '数据库 CPU 使用率' },
+  { value: 'db_memory', label: '数据库内存使用率' },
+  { value: 'db_disk', label: '数据库磁盘使用率' },
+  { value: 'db_connection', label: '数据库连接数使用率' },
+  { value: 'db_iops', label: '数据库 IOPS 使用率' },
   { value: 'nas_offline', label: 'NAS 离线' },
   { value: 'nas_raid_degraded', label: 'RAID 降级' },
   { value: 'nas_disk_smart', label: '硬盘 S.M.A.R.T. 异常' },
@@ -47,6 +53,23 @@ const NAS_TYPE_DEFAULTS: Record<string, { threshold: number; unit: string }> = {
 
 function isNasType(type: string): boolean {
   return NAS_TYPE_VALUES.has(type)
+}
+
+// Database (RDS) alert types — all percentage metrics with a threshold
+const DB_TYPE_VALUES = new Set([
+  'db_cpu', 'db_memory', 'db_disk', 'db_connection', 'db_iops',
+])
+
+const DB_TYPE_DEFAULTS: Record<string, { threshold: number; unit: string }> = {
+  db_cpu: { threshold: 80, unit: '%' },
+  db_memory: { threshold: 80, unit: '%' },
+  db_disk: { threshold: 85, unit: '%' },
+  db_connection: { threshold: 80, unit: '%' },
+  db_iops: { threshold: 80, unit: '%' },
+}
+
+function isDbType(type: string): boolean {
+  return DB_TYPE_VALUES.has(type)
 }
 
 const OPERATOR_OPTIONS = ['>', '>=', '<', '<=', '==', '!=']
@@ -146,6 +169,8 @@ export default function Alerts() {
   })
   const [nasDevices, setNasDevices] = useState<NasDevice[]>([])
   const [nasDevicesLoaded, setNasDevicesLoaded] = useState(false)
+  const [databases, setDatabases] = useState<RDSInfo[]>([])
+  const [databasesLoaded, setDatabasesLoaded] = useState(false)
 
   // Channels state
   const [channels, setChannels] = useState<NotificationChannel[]>([])
@@ -195,6 +220,14 @@ export default function Alerts() {
       setNasDevicesLoaded(true)
     } catch { /* ignore */ }
   }, [nasDevicesLoaded])
+
+  const loadDatabases = useCallback(async () => {
+    if (databasesLoaded) return
+    try {
+      setDatabases(await getDatabases())
+      setDatabasesLoaded(true)
+    } catch { /* ignore */ }
+  }, [databasesLoaded])
 
   useEffect(() => { loadStats() }, [loadStats])
 
@@ -627,6 +660,7 @@ export default function Alerts() {
                   onClick={() => {
                     setShowRuleForm(!showRuleForm)
                     if (!showRuleForm && isNasType(ruleForm.type)) loadNasDevices()
+                    if (!showRuleForm && isDbType(ruleForm.type)) loadDatabases()
                   }}
                   className="flex items-center gap-1.5 px-4 py-2 text-[13px] font-medium text-white bg-[#2ca07a] hover:bg-[#259068] rounded-[6px] transition-colors"
                 >
@@ -650,7 +684,7 @@ export default function Alerts() {
                       value={ruleForm.type}
                       onChange={(e) => {
                         const newType = e.target.value
-                        const defaults = NAS_TYPE_DEFAULTS[newType]
+                        const defaults = NAS_TYPE_DEFAULTS[newType] ?? DB_TYPE_DEFAULTS[newType]
                         setRuleForm({
                           ...ruleForm,
                           type: newType,
@@ -659,11 +693,17 @@ export default function Alerts() {
                           unit: defaults?.unit ?? ruleForm.unit,
                         })
                         if (isNasType(newType)) loadNasDevices()
+                        if (isDbType(newType)) loadDatabases()
                       }}
                       className={selectClass}
                     >
                       <optgroup label="服务器 / 探针">
-                        {RULE_TYPE_OPTIONS.filter((o) => !isNasType(o.value)).map((o) => (
+                        {RULE_TYPE_OPTIONS.filter((o) => !isNasType(o.value) && !isDbType(o.value)).map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="数据库">
+                        {RULE_TYPE_OPTIONS.filter((o) => isDbType(o.value)).map((o) => (
                           <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </optgroup>
@@ -682,6 +722,17 @@ export default function Alerts() {
                         <option value="">所有 NAS</option>
                         {nasDevices.map((d) => (
                           <option key={d.id} value={`nas:${d.id}`}>{d.name} ({d.host})</option>
+                        ))}
+                      </select>
+                    ) : isDbType(ruleForm.type) ? (
+                      <select
+                        value={ruleForm.target_id}
+                        onChange={(e) => setRuleForm({ ...ruleForm, target_id: e.target.value })}
+                        className={selectClass}
+                      >
+                        <option value="">所有数据库</option>
+                        {databases.map((d) => (
+                          <option key={d.host_id} value={`db:${d.host_id}`}>{d.name} ({d.engine})</option>
                         ))}
                       </select>
                     ) : (
